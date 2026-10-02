@@ -40,7 +40,7 @@ export const MODULES: ModuleMeta[] = [
     name: "出土物登记",
     entity: "出土物",
     desc: "维护出土物，围绕器物编号、出土探方、出土层位、器物类别做登记、筛选与状态流转。",
-    fields: ["器物编号", "出土探方", "出土层位", "器物类别", "质地", "完残程度", "最大尺寸", "登记状态"],
+    fields: ["器物编号", "出土探方", "出土层位", "器物类别", "质地", "完残程度", "最大尺寸", "登记状态", "拼对结论"],
     statuses: ["待登记", "已登记", "已编目", "待复检"],
     actions: ["提交登记", "完成编目", "提交复检"],
     actionTargets: {"提交登记": "已登记", "完成编目": "已编目", "提交复检": "待复检"},
@@ -56,6 +56,14 @@ export const MODULES: ModuleMeta[] = [
     actions: ["提交拼对", "确认复原", "终止拼对"],
     actionTargets: {"提交拼对": "拼对中", "确认复原": "已复原", "终止拼对": "已放弃"},
     metrics: ["待拼对记录", "拼对中记录", "已复原器物"],
+    uniqueField: "拼对编号",
+    sequentialFlow: true,
+    lockStatuses: ["已复原", "已放弃"],
+    writeBack: {
+      module: "find",
+      links: [["拼对编号", "器物编号"], ["所属单位", "出土探方"]],
+      field: "拼对结论",
+    },
   },
   {
     key: "bone",

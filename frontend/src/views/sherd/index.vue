@@ -6,10 +6,22 @@
         <p class="page-desc">维护拼对记录，围绕拼对编号、所属单位、陶系、纹饰做登记、筛选与状态流转。</p>
       </div>
       <div class="page-actions">
-        <button class="btn primary" type="button" @click="openCreate">登记拼对记录</button>
+        <button class="btn primary" type="button" @click="toggleCreate">登记拼对记录</button>
         <button class="btn" type="button" @click="exportRows">导出陶片拼对清单</button>
       </div>
     </header>
+
+    <form v-if="showCreate" class="create-panel" @submit.prevent="submitCreate">
+      <label v-for="field in createFields" :key="field" class="filter-item">
+        <span>{{ field }}</span>
+        <input
+          v-model="createForm[field]"
+          :placeholder="field === uniqueField ? '必填，重复编号按已有记录处理' : `填写${field}`"
+        />
+      </label>
+      <button class="btn primary" type="submit">提交登记</button>
+      <button class="btn ghost" type="button" @click="toggleCreate">取消</button>
+    </form>
 
     <div class="stat-row">
       <article v-for="item in stats" :key="item.label" class="stat-card">
@@ -43,18 +55,35 @@
       </thead>
       <tbody>
         <tr v-for="row in rows" :key="String(row.id)">
-          <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
+          <td v-for="column in columns" :key="column">
+            <input
+              v-if="editingId === Number(row.id) && editableColumns.includes(column)"
+              v-model="editForm[column]"
+              class="cell-input"
+            />
+            <template v-else>{{ row[column] ?? '—' }}</template>
+          </td>
           <td>{{ row.status }}</td>
           <td class="row-actions">
-            <button
-              v-for="action in actions"
-              :key="action"
-              class="link"
-              type="button"
-              @click="runAction(action, row)"
-            >
-              {{ action }}
-            </button>
+            <template v-if="editingId === Number(row.id)">
+              <button class="link" type="button" @click="saveEdit(row)">保存</button>
+              <button class="link" type="button" @click="cancelEdit">取消</button>
+            </template>
+            <template v-else>
+              <button
+                v-for="action in rowActions(row)"
+                :key="action"
+                class="link"
+                type="button"
+                @click="runAction(action, row)"
+              >
+                {{ action }}
+              </button>
+              <button v-if="!isLocked(row)" class="link" type="button" @click="startEdit(row)">
+                编辑
+              </button>
+              <span v-else class="locked-tag">已锁定</span>
+            </template>
           </td>
         </tr>
         <tr v-if="!rows.length">
@@ -65,6 +94,7 @@
 
     <footer class="page-foot">
       <span>共 {{ total }} 条陶片拼对记录</span>
+      <span v-if="noticeMessage" class="notice-text">{{ noticeMessage }}</span>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
     </footer>
   </section>
@@ -74,30 +104,51 @@
 import { computed, onMounted, ref } from 'vue'
 
 import {
+  availableActions,
+  createEntry,
   downloadEntries,
   listEntries,
   moduleMeta,
   runAction as applyAction,
+  updateEntry,
 } from '@/api/local-service'
 import type { EntryRow } from '@/data/types'
 
 const meta = moduleMeta('sherd')
 const columns = ["拼对编号", "所属单位", "陶系", "纹饰", "可辨器型", "拼合片数", "拼对结论", "拼对状态"]
-const actions = ["提交拼对", "确认复原", "终止拼对"]
 const statuses = ["待拼对", "拼对中", "已复原", "已放弃"]
-const stats = [{"label": "待拼对记录", "value": 0}, {"label": "拼对中记录", "value": 0}, {"label": "已复原器物", "value": 0}]
+const uniqueField = meta.uniqueField ?? '拼对编号'
+const createFields = ["拼对编号", "所属单位", "陶系", "纹饰", "可辨器型", "拼合片数", "拼对结论"]
+const editableColumns = ["陶系", "纹饰", "可辨器型", "拼合片数", "拼对结论"]
 
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
 const errorMessage = ref('')
+const noticeMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
+const showCreate = ref(false)
+const createForm = ref<Record<string, string>>({})
+const editingId = ref<number | null>(null)
+const editForm = ref<Record<string, string>>({})
+
+function countByStatus(status: string) {
+  return rows.value.filter((row) => String(row.status) === status).length
+}
+
+const stats = computed(() => [
+  { label: "待拼对记录", value: countByStatus("待拼对") },
+  { label: "拼对中记录", value: countByStatus("拼对中") },
+  { label: "已复原器物", value: countByStatus("已复原") },
+])
 const statusSummary = computed(() =>
-  statuses.map((status: string) => ({
-    status,
-    count: rows.value.filter((row) => String(row.status) === status).length,
-  })),
+  statuses.map((status: string) => ({ status, count: countByStatus(status) })),
 )
+
+function clearMessages() {
+  errorMessage.value = ''
+  noticeMessage.value = ''
+}
 
 function resetFilters() {
   filters.value = {}
@@ -108,22 +159,76 @@ function exportRows() {
   downloadEntries(meta.key)
 }
 
-function openCreate() {
-  errorMessage.value = '拼对记录登记入口尚未接入审批流'
+function toggleCreate() {
+  clearMessages()
+  showCreate.value = !showCreate.value
+  if (!showCreate.value) {
+    createForm.value = {}
+  }
+}
+
+function submitCreate() {
+  clearMessages()
+  const result = createEntry(meta.key, { ...createForm.value })
+  if (!result.ok) {
+    errorMessage.value = result.message
+    return
+  }
+  noticeMessage.value = result.message
+  if (result.created) {
+    showCreate.value = false
+    createForm.value = {}
+  }
+  reload()
+}
+
+function isLocked(row: EntryRow) {
+  return (meta.lockStatuses ?? []).includes(String(row.status))
+}
+
+function rowActions(row: EntryRow) {
+  return availableActions(meta.key, row)
+}
+
+function startEdit(row: EntryRow) {
+  clearMessages()
+  editingId.value = Number(row.id)
+  const form: Record<string, string> = {}
+  for (const column of editableColumns) {
+    form[column] = String(row[column] ?? '')
+  }
+  editForm.value = form
+}
+
+function cancelEdit() {
+  editingId.value = null
+  editForm.value = {}
+}
+
+function saveEdit(row: EntryRow) {
+  clearMessages()
+  const result = updateEntry(meta.key, Number(row.id), { ...editForm.value })
+  if (!result.ok) {
+    errorMessage.value = result.message
+    return
+  }
+  noticeMessage.value = result.message
+  cancelEdit()
+  reload()
 }
 
 function runAction(action: string, row: EntryRow) {
-  errorMessage.value = ''
+  clearMessages()
   const result = applyAction(meta.key, Number(row.id), action)
   if (!result.ok) {
     errorMessage.value = result.message
     return
   }
+  noticeMessage.value = result.message
   reload()
 }
 
 function reload() {
-  errorMessage.value = ''
   try {
     const payload = listEntries(meta.key, filters.value)
     rows.value = payload.items

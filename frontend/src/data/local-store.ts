@@ -37,7 +37,9 @@ export function allRows(): Record<string, EntryRow[]> {
 }
 
 export function listRows(key: string): EntryRow[] {
-  return allRows()[key] ?? []
+  // 返回深拷贝：页面层拿到的是副本，任何改动都必须走 saveRows 才会落库，
+  // 避免出现「页面上改了、缓存里变了、刷新后又回到旧值」的三层不一致。
+  return clone(allRows()[key] ?? [])
 }
 
 export function saveRows(key: string, rows: EntryRow[]): void {
