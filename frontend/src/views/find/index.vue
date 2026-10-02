@@ -3,11 +3,12 @@
     <header class="page-head">
       <div>
         <h2>出土物登记管理</h2>
-        <p class="page-desc">维护出土物，围绕器物编号、出土探方、出土层位、器物类别做登记、筛选与状态流转。</p>
+        <p class="page-desc">维护出土物，围绕器物编号、出土探方、出土层位、器物类别做登记、筛选与状态流转；陶片拼对的处置结论会回写到本台账。</p>
       </div>
       <div class="page-actions">
         <button class="btn primary" type="button" @click="openCreate">登记出土物</button>
-        <button class="btn" type="button" @click="exportRows">导出出土物登记清单</button>
+        <button class="btn" type="button" @click="openSherdCreate">拼对登记</button>
+        <button class="btn" type="button" @click="exportRows">导出土物登记清单</button>
       </div>
     </header>
 
@@ -43,7 +44,7 @@
       </thead>
       <tbody>
         <tr v-for="row in rows" :key="String(row.id)">
-          <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
+          <td v-for="column in columns" :key="column">{{ isBlankCell(row[column]) ? '—' : row[column] }}</td>
           <td>{{ row.status }}</td>
           <td class="row-actions">
             <button
@@ -67,6 +68,18 @@
       <span>共 {{ total }} 条出土物登记记录</span>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
     </footer>
+
+    <SherdFormModal
+      :open="sherdModalOpen"
+      title="拼对登记（出土物台账入口）"
+      submit-text="提交拼对登记"
+      :fields="sherdFields"
+      :required="['拼对编号']"
+      :initial="null"
+      hint="与陶片拼对页共用同一份拼对编号数据；编号重复时按已有记录处理，不新增、不改环节，处置结论回写本台账。"
+      @close="sherdModalOpen = false"
+      @submit="submitSherdCreate"
+    />
   </section>
 </template>
 
@@ -79,25 +92,33 @@ import {
   moduleMeta,
   runAction as applyAction,
 } from '@/api/local-service'
+import { registerSherd, type SherdForm } from '@/data/sherd-domain'
 import type { EntryRow } from '@/data/types'
+import SherdFormModal from '@/components/SherdFormModal.vue'
 
 const meta = moduleMeta('find')
-const columns = ["器物编号", "出土探方", "出土层位", "器物类别", "质地", "完残程度", "最大尺寸", "登记状态"]
-const actions = ["提交登记", "完成编目", "提交复检"]
-const statuses = ["待登记", "已登记", "已编目", "待复检"]
-const stats = [{"label": "待登记器物", "value": 0}, {"label": "已编目器物", "value": 0}, {"label": "本月出土件数", "value": 0}]
+const columns = ['器物编号', '出土探方', '出土层位', '器物类别', '质地', '完残程度', '最大尺寸', '拼对编号', '拼对处置', '登记状态']
+const actions = ['提交登记', '完成编目', '提交复检']
+const statuses = ['待登记', '已登记', '已编目', '待复检']
+const stats = [{ label: '待登记器物', value: 0 }, { label: '已编目器物', value: 0 }, { label: '本月出土件数', value: 0 }]
+const sherdFields: (keyof SherdForm)[] = ['拼对编号', '所属单位', '关联器物编号', '陶系', '纹饰', '可辨器型', '拼合片数']
 
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
+const sherdModalOpen = ref(false)
 const statusSummary = computed(() =>
   statuses.map((status: string) => ({
     status,
     count: rows.value.filter((row) => String(row.status) === status).length,
   })),
 )
+
+function isBlankCell(value: unknown): boolean {
+  return value === undefined || value === null || String(value).trim() === ''
+}
 
 function resetFilters() {
   filters.value = {}
@@ -110,6 +131,19 @@ function exportRows() {
 
 function openCreate() {
   errorMessage.value = '出土物登记入口尚未接入审批流'
+}
+
+// 拼对登记入口：与陶片拼对页共用 SherdFormModal 和领域服务。
+function openSherdCreate() {
+  errorMessage.value = ''
+  sherdModalOpen.value = true
+}
+
+function submitSherdCreate(form: SherdForm) {
+  const result = registerSherd(form)
+  errorMessage.value = result.message
+  sherdModalOpen.value = false
+  reload()
 }
 
 function runAction(action: string, row: EntryRow) {
